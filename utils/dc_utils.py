@@ -70,17 +70,63 @@ def read_video_frames(video_path, process_length, target_fps=-1, max_res=-1):
 
 
 def save_video(frames, output_video_path, fps=10, is_depths=False, grayscale=False):
-    writer = imageio.get_writer(output_video_path, fps=fps, macro_block_size=1, codec='libx264', ffmpeg_params=['-crf', '18'])
-    if is_depths:
-        colormap = np.array(cm.get_cmap("inferno").colors)
-        d_min, d_max = frames.min(), frames.max()
-        for i in range(frames.shape[0]):
-            depth = frames[i]
-            depth_norm = ((depth - d_min) / (d_max - d_min) * 255).astype(np.uint8)
-            depth_vis = (colormap[depth_norm] * 255).astype(np.uint8) if not grayscale else depth_norm
-            writer.append_data(depth_vis)
-    else:
-        for i in range(frames.shape[0]):
-            writer.append_data(frames[i])
+    def iter_video_frames():
+        if is_depths:
+            colormap = np.array(cm.get_cmap("inferno").colors)
+            d_min, d_max = frames.min(), frames.max()
+            denom = max(d_max - d_min, 1e-8)
+            for i in range(frames.shape[0]):
+                depth = frames[i]
+                depth_norm = ((depth - d_min) / denom * 255).astype(np.uint8)
+                depth_vis = (colormap[depth_norm] * 255).astype(np.uint8) if not grayscale else depth_norm
+                yield depth_vis
+        else:
+            for i in range(frames.shape[0]):
+                yield frames[i]
 
-    writer.close()
+    writer = None
+    try:
+        # Prefer the ffmpeg backend when available because it supports macro_block_size.
+        writer = imageio.get_writer(
+            output_video_path,
+            format='FFMPEG',
+            fps=fps,
+            macro_block_size=1,
+            codec='libx264',
+            ffmpeg_params=['-crf', '18'],
+        )
+    except Exception:
+        try:
+            # PyAV does not accept macro_block_size; use a minimal, compatible config.
+            writer = imageio.get_writer(output_video_path, fps=fps, codec='libx264')
+        except Exception:
+            writer = None
+
+    if writer is not None:
+        for frame in iter_video_frames():
+            writer.append_data(frame)
+        writer.close()
+        return
+
+    # Fallback to OpenCV if ImageIO backends are unavailable in the current env.
+    import cv2
+    cv_writer = None
+    for frame in iter_video_frames():
+        if frame.ndim == 2:
+            frame = np.stack([frame, frame, frame], axis=-1)
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame, 0, 255).astype(np.uint8)
+
+        if cv_writer is None:
+            height, width = frame.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            cv_writer = cv2.VideoWriter(output_video_path, fourcc, float(fps), (width, height))
+            if not cv_writer.isOpened():
+                raise RuntimeError(
+                    'Failed to initialize video writer. Install imageio[ffmpeg] or imageio[pyav].'
+                )
+
+        cv_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+    if cv_writer is not None:
+        cv_writer.release()

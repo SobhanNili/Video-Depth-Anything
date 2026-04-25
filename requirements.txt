@@ -6,6 +6,7 @@ matplotlib
 pillow
 imageio==2.37.0
 imageio-ffmpeg==0.4.7
+setuptools
 decord
 xformers==0.0.23
 einops==0.4.1

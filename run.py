@@ -83,7 +83,14 @@ if __name__ == '__main__':
             exr_file.close()
 
     if args.metric:
-        import open3d as o3d
+        try:
+            import open3d as o3d
+        except ImportError:
+            o3d = None
+            print('open3d is not installed; skipping point cloud export.')
+
+        if o3d is None:
+            raise SystemExit(0)
 
         width, height = depths[0].shape[-1], depths[0].shape[-2]
         x, y = np.meshgrid(np.arange(width), np.arange(height))
