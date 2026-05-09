@@ -2,6 +2,7 @@ import argparse
 import concurrent.futures
 from pathlib import Path
 
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -68,7 +69,10 @@ def process_one_video_from_frames(
             device=device,
             fp32=args.fp32,
         )
-        save_video(depths, str(final_output), fps=fps, is_depths=True, grayscale=args.grayscale)
+        if args.save_npz:
+            np.savez_compressed(str(final_output.with_suffix(".npz")), depths=depths)
+        else:
+            save_video(depths, str(final_output), fps=fps, is_depths=True, grayscale=args.grayscale)
         return video, True, ""
     except Exception as exc:
         return video, False, str(exc)
@@ -101,6 +105,7 @@ def main() -> int:
     parser.add_argument("--metric", action="store_true", help="Pass --metric to run.py.")
     parser.add_argument("--fp32", action="store_true", help="Infer with torch.float32 (default: float16).")
     parser.add_argument("--grayscale", action="store_true", help="Save grayscale depth videos.")
+    parser.add_argument("--save_npz", action="store_true", help="Save depth arrays as compressed .npz files.")
     parser.add_argument("--input_size", type=int, default=518)
     parser.add_argument("--max_res", type=int, default=1280)
     parser.add_argument("--max_len", type=int, default=-1)
@@ -155,7 +160,7 @@ def main() -> int:
     prefetch = min(args.prefetch_videos, len(videos))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=decode_workers) as executor:
-        decode_futures: dict[int, concurrent.futures.Future] = {}
+        decode_futures: dict[int, concurrent.futures.Future | None] = {}
 
         def submit_decode(index: int) -> None:
             video = videos[index]
